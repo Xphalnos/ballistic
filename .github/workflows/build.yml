@@ -1,0 +1,140 @@
+name: Build
+
+on: [push, pull_request]
+
+concurrency:
+  group: ci-${{github.event_name}}-${{github.ref}}
+  cancel-in-progress: ${{github.event_name == 'push'}}
+
+env:
+  BUILD_TYPE: Release
+  BUILD_DIR: ${{github.workspace}}/build
+
+jobs:
+  get-info:
+    name: Info
+    runs-on: ubuntu-24.04
+    outputs:
+      shorthash: ${{steps.vars.outputs.shorthash}}
+      commit: ${{steps.vars.outputs.commit}}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Commit Count and Git Hash
+        id: vars
+        run: |
+          echo "shorthash=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "commit=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+          echo "shorthash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+
+  Linux:
+    name: Linux
+    runs-on: ubuntu-24.04
+    needs: get-info
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt-get remove --purge man-db
+          sudo apt install -y ninja-build clang lld cmake ccache \
+                         libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+                         libxi-dev libxinerama-dev libwayland-dev libxkbcommon-dev \
+                         wayland-protocols libgl-dev git
+
+      - name: Configure CMake
+        run: cmake -G Ninja -B ${{env.BUILD_DIR}} -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build ${{env.BUILD_DIR}} --config ${{env.BUILD_TYPE}} --parallel $(nproc)
+
+
+  Windows:
+    name: Windows
+    runs-on: windows-2025
+    needs: get-info
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Configure CMake
+        run:
+          cmake -G Ninja -B "${{env.BUILD_DIR}}" -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} `
+          -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build "${{env.BUILD_DIR}}" --config ${{env.BUILD_TYPE}} --parallel $env:NUMBER_OF_PROCESSORS
+
+  macOS-x86_64:
+    name: macOS x86_64
+    runs-on: macos-15-intel
+    needs: get-info
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Dependencies
+        run: |
+          brew install llvm@20
+          echo "CMAKE_PREFIX_PATH=/usr/local/opt/llvm@20" >> $GITHUB_ENV
+
+      - name: Configure CMake (x86_64)
+        run: >
+          cmake -G Ninja -B "${{env.BUILD_DIR}}"
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_C_COMPILER=/usr/local/opt/llvm@20/bin/clang
+          -DCMAKE_CXX_COMPILER=/usr/local/opt/llvm@20/bin/clang++
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+
+      - name: Build (x86_64)
+        run: cmake --build "${{env.BUILD_DIR}}" --config ${{env.BUILD_TYPE}} --parallel $(sysctl -n hw.logicalcpu)
+
+  macOS-arm64:
+    name: macOS ARM64
+    runs-on: macos-14
+    needs: get-info
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Dependencies
+        run: |
+          brew install llvm@20
+          echo "CMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm@20" >> $GITHUB_ENV
+
+      - name: Configure CMake (ARM64)
+        run: >
+          cmake -G Ninja -B "${{env.BUILD_DIR}}"
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+          -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang
+          -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+
+      - name: Build (ARM64)
+        run: cmake --build "${{env.BUILD_DIR}}" --config ${{env.BUILD_TYPE}} --parallel $(sysctl -n hw.logicalcpu)
+
