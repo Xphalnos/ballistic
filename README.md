@@ -2,7 +2,7 @@
   The Ballistic JIT Engine
 </h1>
 
-<p align="center"><em>“Dynarmic but faster"</em></p>
+<p align="center"><em>“The world's fastest ARM recompiler"</em></p>
 
 # Overview
 
